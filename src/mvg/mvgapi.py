@@ -7,10 +7,12 @@ import re
 import threading
 from enum import Enum
 from http import HTTPStatus
-from typing import Any, Coroutine, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import aiohttp
-from furl import furl
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
 
 MVGAPI_DEFAULT_LIMIT = 10  # API defaults to 10, limits to 100
 MVGAPI_DEFAULT_TIMEOUT = 10  # seconds, for temporary sessions (aiohttp defaults to 5 minutes)
@@ -115,28 +117,27 @@ class MvgApi:
         return True
 
     @staticmethod
-    async def __get(url: furl, session: aiohttp.ClientSession) -> Any:  # noqa: ANN401
+    async def __get(url: str, params: dict[str, Any] | None, session: aiohttp.ClientSession) -> Any:  # noqa: ANN401
         """Perform the real get request using a given client session.
 
         :param url: the url to get
+        :param params: the query parameters
         :param session: the client session used for the call
         :raises MvgApiError: raised on communication failure or unexpected result
         :returns: the response as json object
         """
         try:
-            async with session.get(
-                url.url,
-            ) as resp:
+            async with session.get(url, params=params) as resp:
                 if resp.status != HTTPStatus.OK:
-                    msg = f"Bad API call: Got response ({resp.status}) from {url.url}."
+                    msg = f"Bad API call: Got response ({resp.status}) from {resp.url}."
                     raise MvgApiError(msg)
                 if resp.content_type != "application/json":
-                    msg = f"Bad API call: Got content type {resp.content_type} from {url.url}."
+                    msg = f"Bad API call: Got content type {resp.content_type} from {resp.url}."
                     raise MvgApiError(msg)
                 return await resp.json()
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            msg = f"Bad API call: Got {type(exc)!s} from {url.url}"
+            msg = f"Bad API call: Got {type(exc)!s} from {url}"
             raise MvgApiError(msg) from exc
 
     @staticmethod
@@ -155,15 +156,13 @@ class MvgApi:
         :raises MvgApiError: raised on communication failure or unexpected result
         :return: the response as JSON object
         """
-        url = furl(base.value)
-        url /= endpoint.value[0] if isinstance(endpoint, Endpoint) else endpoint[0]
-        url.set(query_params=args)
+        url = base.value + (endpoint.value[0] if isinstance(endpoint, Endpoint) else endpoint[0])
 
         if session is not None:
-            return await MvgApi.__get(url, session)
+            return await MvgApi.__get(url, args, session)
 
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=MVGAPI_DEFAULT_TIMEOUT)) as tmp_session:
-            return await MvgApi.__get(url, tmp_session)
+            return await MvgApi.__get(url, args, tmp_session)
 
     @staticmethod
     async def station_ids_async(
